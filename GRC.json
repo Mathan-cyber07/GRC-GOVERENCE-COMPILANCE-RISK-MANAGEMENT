@@ -1,0 +1,560 @@
+{
+  "name": "NGP-030 — GRC Compliance Control Mapper",
+  "nodes": [
+    {
+      "parameters": {
+        "updates": [
+          "message"
+        ],
+        "additionalFields": {}
+      },
+      "id": "375e142b-870a-44e5-beca-f668b24b17d9",
+      "name": "Telegram Trigger",
+      "type": "n8n-nodes-base.telegramTrigger",
+      "typeVersion": 1.5,
+      "position": [
+        -416,
+        144
+      ],
+      "webhookId": "46408a1d-4a4b-45c8-a179-5695ead90221",
+      "credentials": {
+        "telegramApi": {
+          "id": "Anlav5HtAmjpBTpH",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst message = $json.message ?? $json.edited_message ?? {};\nconst originalText = String(message.text ?? message.caption ?? \"\").trim();\n\n// Mask Telegram bot tokens and common API-key patterns.\nconst redactedText = originalText\n  .replace(/\\b\\d{6,12}:[A-Za-z0-9_-]{20,}\\b/g, \"[REDACTED_SECRET]\")\n  .replace(/\\bsk-[A-Za-z0-9_-]{16,}\\b/g, \"[REDACTED_SECRET]\")\n  .replace(/\\bgh[pousr]_[A-Za-z0-9_]{20,}\\b/g, \"[REDACTED_SECRET]\");\n\n// Normalise the /history command (also accepts /history@BotName).\nconst normalisedText = /^\\/history(@\\w+)?$/i.test(redactedText) ? \"/history\" : redactedText;\n\nconst receivedAt = message.date\n  ? new Date(message.date * 1000).toISOString()\n  : new Date().toISOString();\n\nreturn {\n  json: {\n    chatId: message.chat?.id != null ? String(message.chat.id) : \"\",\n    messageText: normalisedText,\n    receivedAt\n  }\n};\n"
+      },
+      "id": "90889a02-039b-4a4b-a9f3-a3c5b4cb02ee",
+      "name": "Code in JavaScript",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -464,
+        -256
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "8d509960-3a7a-471f-8891-c94644f0742f",
+              "leftValue": "={{ $json.messageText }}",
+              "rightValue": "/history",
+              "operator": {
+                "type": "string",
+                "operation": "equals",
+                "name": "filter.operator.equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "25fe1551-eb7e-47a7-82dc-448744a83203",
+      "name": "If",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        224,
+        -176
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "value": "7AbqkrezLIlfejqa",
+          "mode": "list",
+          "cachedResultName": "ngp030_compliance_mappings"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "chat_ref",
+              "keyValue": "={{ $('Code in JavaScript').first().json.chatId }}"
+            }
+          ]
+        },
+        "limit": 10,
+        "orderBy": true
+      },
+      "id": "06b6868c-2233-4970-8cb5-0b33b7831541",
+      "name": "Get Recent Assessments",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        704,
+        -368
+      ],
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst rows = $input.all().map(i => i.json).filter(r => r && Object.keys(r).length > 0 && (r.verdict || r.control_id || r.practice)).slice(0, 4);\nlet historyMessage;\nif (rows.length === 0) {\n  historyMessage = \"NGP-030 History: no saved assessments for this chat yet. Send a security practice to create one.\";\n} else {\n  const lines = rows.slice(0, 4).map((r, idx) => {\n    const practice = String(r.practice || \"(no practice text)\").replace(/\\s+/g, \" \").slice(0, 160);\n    return [\n      (idx + 1) + \". \" + (r.mapped_at_ist || \"time n/a\") + \" IST\",\n      \"Practice: \" + practice,\n      \"Control: \" + (r.control_id || \"Requires Review\") + (r.control_name && r.control_name !== \"Requires Review\" ? \" – \" + r.control_name : \"\"),\n      \"Verdict: \" + (r.verdict || \"Requires Review\") + \" | Severity: \" + (r.severity || \"Requires Review\"),\n      \"Gap: \" + String(r.gap || \"Requires Review\").slice(0, 200)\n    ].join(\"\\n\");\n  });\n  historyMessage = \"NGP-030 – Last \" + rows.length + \" assessment(s):\\n\\n\" + lines.join(\"\\n\\n\");\n}\nreturn [{ json: { historyMessage: historyMessage.slice(0, 4000) } }];\n"
+      },
+      "id": "2b50dccf-3796-4366-b221-ab60e5234d17",
+      "name": "Format History",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        928,
+        -368
+      ]
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Code in JavaScript').first().json.chatId }}",
+        "text": "={{ $json.historyMessage || 'NGP-030: history could not be formatted. Please try again.' }}",
+        "additionalFields": {}
+      },
+      "id": "7d0826c9-b034-4e02-966f-bb080cc35086",
+      "name": "Send History",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1152,
+        -368
+      ],
+      "webhookId": "5e59829c-3c2c-4d1a-8aa3-9fc2be10a4f0",
+      "credentials": {
+        "telegramApi": {
+          "id": "Anlav5HtAmjpBTpH",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ $('Code in JavaScript').first().json.messageText }}",
+        "options": {
+          "systemMessage": "You are a GRC Compliance Control Mapper using NIST SP 800-53.\n\nAnalyze the security practice received from Telegram.\n\nFor every security practice:\n1. Call the connected Code Tool first, passing the complete security practice as the query input.\n2. Use the returned candidate controls to identify the closest relevant control.\n3. Do not claim that the tool has officially verified the NIST control. It uses keyword matching only.\n4. Classify the practice using exactly one verdict: COMPLIANT, PARTIAL, NON-COMPLIANT, or INSUFFICIENT EVIDENCE.\n5. Use INSUFFICIENT EVIDENCE when the description alone does not prove that the control is implemented and effective.\n6. Identify one specific compliance gap.\n7. Recommend one practical improvement.\n\nReturn the result in this format:\n\nVerdict: INSUFFICIENT EVIDENCE\nNIST Control: [candidate ID and title, or Requires Review]\nReason: [brief explanation]\nGap: [one specific missing piece of evidence or control weakness]\nRecommendation: [one practical improvement]\n\nWrite control IDs with a plain ASCII hyphen, e.g. IA-5, and separate ID and title with \" – \".\nA user saying a policy exists is a claim, not evidence of implementation; do not mark COMPLIANT unless concrete implementation evidence is described.\n\nNever invent evidence, control IDs, or official verification. Keep the response concise and understandable.\n\nIf the message is /history, do not classify it as a security practice. It must be handled by the workflow's history logic.",
+          "forceToolCallOnFirstIteration": false
+        }
+      },
+      "id": "4e44c040-c1c2-4d3b-befa-1dd81d9d4907",
+      "name": "AI Agent1",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [
+        944,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "model": "openai/gpt-oss-120b",
+        "options": {}
+      },
+      "id": "ebe877e4-1a61-497f-b3f5-0d2df3578cff",
+      "name": "Groq Chat Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatGroq",
+      "typeVersion": 1,
+      "position": [
+        624,
+        208
+      ],
+      "credentials": {
+        "groqApi": {
+          "id": "XbAqgSa5tAkt4heC",
+          "name": "Groq account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "description": "Find candidate NIST SP 800-53 controls for a security practice. Call this tool with an object containing a string field named `query`. Pass the complete security practice in `query`. Example: {\"query\":\"we rotate admin passwords every 90 days\"}.",
+        "jsCode": "\nconst queryText =\n  typeof query === \"string\"\n    ? query\n    : query && typeof query === \"object\"\n      ? String(query.query ?? query.text ?? \"\")\n      : String(query ?? \"\");\n\nconst q = queryText.toLowerCase().trim();\n\nconst controls = [\n  {\n    id: \"IA-5\",\n    name: \"Authenticator Management\",\n    keywords: [\n      \"password\",\n      \"passwords\",\n      \"rotation\",\n      \"rotate\",\n      \"rotating\",\n      \"credential\",\n      \"credentials\",\n      \"authenticator\",\n      \"password change\",\n      \"password policy\",\n      \"reset password\"\n    ]\n  },\n  {\n    id: \"AC-2\",\n    name: \"Account Management\",\n    keywords: [\n      \"account\",\n      \"admin account\",\n      \"user account\",\n      \"account review\",\n      \"disable account\",\n      \"account creation\",\n      \"account removal\"\n    ]\n  },\n  {\n    id: \"AC-6\",\n    name: \"Least Privilege\",\n    keywords: [\n      \"least privilege\",\n      \"minimum access\",\n      \"privileged access\",\n      \"permissions\",\n      \"restrict access\",\n      \"access rights\",\n      \"unauthorized access\"\n    ]\n  },\n  {\n    id: \"AU-2\",\n    name: \"Event Logging\",\n    keywords: [\n      \"logging\",\n      \"logs\",\n      \"audit events\",\n      \"record events\",\n      \"monitor events\",\n      \"security logs\",\n      \"event monitoring\"\n    ]\n  },\n  {\n    id: \"IA-2\",\n    name: \"Identification and Authentication (Organizational Users)\",\n    keywords: [\n      \"mfa\",\n      \"multi-factor\",\n      \"multifactor\",\n      \"two-factor\",\n      \"authentication\",\n      \"login verification\",\n      \"identity verification\"\n    ]\n  },\n  {\n    id: \"CM-6\",\n    name: \"Configuration Settings\",\n    keywords: [\n      \"configuration\",\n      \"security settings\",\n      \"secure configuration\",\n      \"baseline\",\n      \"system hardening\",\n      \"configuration changes\"\n    ]\n  }\n];\n\nif (!q) {\n  return JSON.stringify({\n    lookup_method: \"keyword matching\",\n    query: \"\",\n    candidate_controls: [],\n    note: \"No security practice was provided.\"\n  });\n}\n\nconst matches = controls\n  .map(control => {\n    const matchedKeywords = control.keywords.filter(keyword =>\n      q.includes(keyword)\n    );\n\n    return {\n      id: control.id,\n      name: control.name,\n      score: matchedKeywords.length,\n      matched_keywords: matchedKeywords\n    };\n  })\n  .filter(control => control.score > 0)\n  .sort((a, b) => b.score - a.score);\n\nif (matches.length === 0) {\n  return JSON.stringify({\n    lookup_method: \"keyword matching\",\n    query: queryText,\n    candidate_controls: [],\n    note: \"No clear keyword match found. Review the official NIST SP 800-53 catalog.\"\n  });\n}\n\nreturn JSON.stringify({\n  lookup_method: \"keyword matching\",\n  query: queryText,\n  candidate_controls: matches.slice(0, 3).map(control => ({\n    id: control.id,\n    name: control.name,\n    keyword_matches: control.score,\n    matched_keywords: control.matched_keywords\n  })),\n  note: \"These are candidate controls only. Keyword matching does not verify official control wording or prove compliance. Verify the applicable NIST control and supporting evidence before assigning a verdict.\"\n});\n",
+        "specifyInputSchema": true,
+        "jsonSchemaExample": "\n{\n  \"query\": \"we rotate admin passwords every 90 days\"\n}\n"
+      },
+      "id": "4c944699-aaa8-48cf-b615-5eb25375c9ec",
+      "name": "Code Tool",
+      "type": "@n8n/n8n-nodes-langchain.toolCode",
+      "typeVersion": 1.3,
+      "position": [
+        1120,
+        272
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst src = $('Code in JavaScript').first().json;\nconst raw = typeof $json.output === \"string\" ? $json.output : \"\";\n// Normalise unicode hyphens/dashes and non-breaking spaces produced by the model.\nconst text = raw.replace(/[\\u2010\\u2011\\u2012]/g, \"-\").replace(/\\u00a0/g, \" \").trim();\nconst RR = \"Requires Review\";\n\nfunction field(label, next) {\n  const re = new RegExp(label + \":\\\\s*([\\\\s\\\\S]*?)(?=\\\\n\\\\s*(?:\" + next + \"):|$)\", \"i\");\n  const m = text.match(re);\n  return m ? m[1].replace(/\\s+/g, \" \").trim() : \"\";\n}\nconst LABELS = \"Verdict|NIST Control|Reason|Gap|Recommendation\";\n\nconst verdictRaw = field(\"Verdict\", LABELS).toUpperCase();\nconst VERDICTS = [\"INSUFFICIENT EVIDENCE\", \"NON-COMPLIANT\", \"PARTIAL\", \"COMPLIANT\"];\nconst verdict = VERDICTS.find(v => verdictRaw.startsWith(v)) || RR;\n\nconst controlLine = field(\"NIST Control\", LABELS);\nconst cm = controlLine.match(/\\b([A-Z]{2})\\s*-\\s*(\\d{1,2}(?:\\s*\\(\\d+\\))?)/);\nconst controlId = cm ? (cm[1] + \"-\" + cm[2].replace(/\\s+/g, \"\")) : RR;\nlet controlName = RR;\nif (cm) {\n  const rest = controlLine.slice(controlLine.indexOf(cm[0]) + cm[0].length).replace(/^[\\s\\-\\u2013\\u2014:]+/, \"\").trim();\n  if (rest) controlName = rest;\n}\n\nconst reason = field(\"Reason\", LABELS) || RR;\nconst gap = field(\"Gap\", LABELS) || RR;\nconst improvement = field(\"Recommendation\", LABELS) || RR;\n\n// Documented severity mapping.\nconst SEVERITY = { \"NON-COMPLIANT\": \"HIGH\", \"PARTIAL\": \"MEDIUM\", \"INSUFFICIENT EVIDENCE\": \"MEDIUM\", \"COMPLIANT\": \"LOW\" };\nconst severity = SEVERITY[verdict] || RR;\n\nconst mappedAtIst = $now.setZone(\"Asia/Kolkata\").toFormat(\"yyyy-LL-dd HH:mm:ss\");\nconst executionId = String($execution.id);\n\nconst assessmentMessage = text\n  ? [\n      \"Verdict: \" + verdict,\n      \"NIST Control: \" + (controlId === RR ? RR : controlId + \" – \" + controlName),\n      \"Reason: \" + reason,\n      \"Gap: \" + gap,\n      \"Recommendation: \" + improvement,\n      \"\",\n      \"Severity: \" + severity + \" | Ref: NGP-030 #\" + executionId\n    ].join(\"\\n\")\n  : \"NGP-030: The AI assessment returned no text for your message. The request has been logged as 'Requires Review'. Please try again.\";\n\nconst recordLine = [\"NGP-030\", \"exec #\" + executionId, mappedAtIst + \" IST\", controlId, verdict, severity, gap.slice(0, 120)].join(\" | \");\n\nreturn [{\n  json: {\n    task_tag: \"NGP-030\",\n    chat_ref: String(src.chatId ?? \"\"),\n    practice: src.messageText ?? \"\",\n    control_id: controlId,\n    control_name: controlName,\n    verdict,\n    severity,\n    gap,\n    summary: text ? reason : RR,\n    execution_id: executionId,\n    mapped_at_ist: mappedAtIst,\n    improvement,\n    record_line: recordLine,\n    assessmentMessage\n  }\n}];\n"
+      },
+      "id": "b67bb4f8-a867-4664-bd83-2a1bf3bcaa2c",
+      "name": "Parse Assessment",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1408,
+        608
+      ]
+    },
+    {
+      "parameters": {
+        "dataTableId": {
+          "__rl": true,
+          "value": "7AbqkrezLIlfejqa",
+          "mode": "list",
+          "cachedResultName": "ngp030_compliance_mappings",
+          "cachedResultUrl": "/projects/V5hRfIuBVJV7KQsY/datatables/7AbqkrezLIlfejqa"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "task_tag": "={{ $json.task_tag }}",
+            "chat_ref": "={{ $json.chat_ref }}",
+            "practice": "={{ $json.practice }}",
+            "control_id": "={{ $json.control_id }}",
+            "control_name": "={{ $json.control_name }}",
+            "verdict": "={{ $json.verdict }}",
+            "severity": "={{ $json.severity }}",
+            "gap": "={{ $json.gap }}",
+            "summary": "={{ $json.summary }}",
+            "execution_id": "={{ $json.execution_id }}",
+            "mapped_at_ist": "={{ $json.mapped_at_ist }}",
+            "improvement": "={{ $json.improvement }}",
+            "record_line": "={{ $json.record_line }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "task_tag",
+              "displayName": "task_tag",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "chat_ref",
+              "displayName": "chat_ref",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "practice",
+              "displayName": "practice",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "control_id",
+              "displayName": "control_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "control_name",
+              "displayName": "control_name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "verdict",
+              "displayName": "verdict",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "severity",
+              "displayName": "severity",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "gap",
+              "displayName": "gap",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "summary",
+              "displayName": "summary",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "execution_id",
+              "displayName": "execution_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "mapped_at_ist",
+              "displayName": "mapped_at_ist",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "improvement",
+              "displayName": "improvement",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "record_line",
+              "displayName": "record_line",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "7d3b06a1-3779-4d99-928d-5dd005401f53",
+      "name": "Insert row",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        816,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Code in JavaScript').first().json.chatId }}",
+        "text": "={{ $('Parse Assessment').first().json.assessmentMessage || 'NGP-030: the assessment could not be generated. Please try again.' }}",
+        "additionalFields": {}
+      },
+      "id": "0c9b8e5f-e1d5-4f9a-ac6a-f2ad23bc3d0c",
+      "name": "Send Assessment",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1456,
+        144
+      ],
+      "webhookId": "1827d5d6-4add-47d5-8fa5-0b3e8c22ddca",
+      "credentials": {
+        "telegramApi": {
+          "id": "Anlav5HtAmjpBTpH",
+          "name": "Telegram account"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Telegram Trigger": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript": {
+      "main": [
+        [
+          {
+            "node": "If",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If": {
+      "main": [
+        [
+          {
+            "node": "Get Recent Assessments",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "AI Agent1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Recent Assessments": {
+      "main": [
+        [
+          {
+            "node": "Format History",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format History": {
+      "main": [
+        [
+          {
+            "node": "Send History",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Agent1": {
+      "main": [
+        [
+          {
+            "node": "Parse Assessment",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Groq Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Agent1",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code Tool": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent1",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Assessment": {
+      "main": [
+        [
+          {
+            "node": "Insert row",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Insert row": {
+      "main": [
+        [
+          {
+            "node": "Send Assessment",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "ded0b819-b1b2-4458-ab76-7435d4c37ac8",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "cf136e83833dc72ab75806a1cfcfbfddbed5cd81f3101ae0bd9ab6bcdc47cf93"
+  },
+  "nodeGroups": [
+    {
+      "id": "27e3a04d-159b-4b7c-beee-b3710cfa6cea",
+      "name": "Answer history request",
+      "nodeIds": [
+        "06b6868c-2233-4970-8cb5-0b33b7831541",
+        "2b50dccf-3796-4366-b221-ab60e5234d17",
+        "7d0826c9-b034-4e02-966f-bb080cc35086"
+      ],
+      "description": "For /history: loads the four newest saved assessments and replies with a readable list"
+    },
+    {
+      "id": "8b511380-ec16-4776-beca-db9d5184b896",
+      "name": "Assess and record practice",
+      "nodeIds": [
+        "4e44c040-c1c2-4d3b-befa-1dd81d9d4907",
+        "ebe877e4-1a61-497f-b3f5-0d2df3578cff",
+        "4c944699-aaa8-48cf-b615-5eb25375c9ec",
+        "b67bb4f8-a867-4664-bd83-2a1bf3bcaa2c",
+        "7d3b06a1-3779-4d99-928d-5dd005401f53",
+        "0c9b8e5f-e1d5-4f9a-ac6a-f2ad23bc3d0c"
+      ],
+      "description": "Maps the practice to a NIST 800-53 control, saves the verdict, then replies only after the save succeeds"
+    }
+  ],
+  "id": "XsAZLNaQ9OruC1gL",
+  "tags": []
+}
